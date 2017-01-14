@@ -32,8 +32,12 @@ class ModelRunnerTF(object):
 
     def init_models(self, network, action_type_no, learning_rate, rms_decay, rms_epsilon):        
         with tf.device(self.args.device):
-            model_policy = ModelTorcs2(self.args, "policy", True, action_type_no, self.thread_no)
-            model_target = ModelTorcs2(self.args, "target", False, action_type_no, self.thread_no)
+            if self.args.vision:
+                model_policy = ModelTorcs(self.args, "policy", True, action_type_no, self.thread_no)
+                model_target = ModelTorcs(self.args, "target", False, action_type_no, self.thread_no)
+            else:
+                model_policy = ModelTorcs2(self.args, "policy", True, action_type_no, self.thread_no)
+                model_target = ModelTorcs2(self.args, "target", False, action_type_no, self.thread_no)
             
             self.model_policy = model_policy
     
@@ -69,9 +73,7 @@ class ModelRunnerTF(object):
             #optimizer_critic = tf.train.RMSPropOptimizer(0.001, decay=rms_decay, epsilon=rms_epsilon)
             optimizer_critic = tf.train.AdamOptimizer(0.001)
             
-            #self.critic_grads = optimizer_critic.compute_gradients(self.critic_y, self.action_in)
             self.critic_grads = tf.gradients(self.critic_y, self.action_in)
-            #self.critic_grads2 = tf.gradients(self.critic_y, self.x_in)
             self.critic_step = optimizer_critic.minimize(loss = critic_loss, var_list = self.critic_vars)
 
             #optimizer_actor = tf.train.RMSPropOptimizer(0.0001, decay=rms_decay, epsilon=rms_epsilon)
@@ -98,7 +100,7 @@ class ModelRunnerTF(object):
         return self.sess.run(self.actor_y, {self.x_in: history_buffer})[0]
     
     def print_weights(self):
-        for var in self.actor_vars:
+        for var in self.actor_vars + self.critic_vars:
             print ''
             print '[ ' + var.name + ']'
             print self.sess.run(var)
@@ -130,7 +132,6 @@ class ModelRunnerTF(object):
             else:
                 y_[i] = reward + self.discount_factor * y2[i]
 
-        #_, critic_y_value, x_norm_value, h_critic_conv1_value, h_critic_conv2_value, h_critic_fc1_value, h_critic_concat_value = self.sess.run([self.critic_step, self.critic_y, self.model_policy.x_normalized, self.model_policy.h_critic_conv1, self.model_policy.h_critic_conv2, self.model_policy.h_critic_fc1, self.model_policy.h_critic_concat], feed_dict={
         self.sess.run([self.critic_step], feed_dict={
             self.x_in: prestates,
             self.action_in: actions,
@@ -141,16 +142,29 @@ class ModelRunnerTF(object):
             self.x_in: prestates,
         })
 
-        critic_grads_value = self.sess.run(self.critic_grads, feed_dict= {
-            self.x_in: prestates,
-            self.action_in: actor_y_value
-        })
+        if self.args.vision:
+            critic_grads_value = self.sess.run(self.critic_grads, feed_dict= {
+            #h_critic_conv1_value, h_critic_conv3_flat_value, h_critic_concat_value, h_critic_fc1_value, critic_grads_value, critic_y_value = self.sess.run([self.model_policy.h_critic_conv1, self.model_policy.h_critic_conv2_flat, self.model_policy.h_critic_concat, self.model_policy.h_critic_fc1, self.critic_grads, self.critic_y], feed_dict= {
+                self.x_in: prestates,
+                self.action_in: actor_y_value
+            })
+        else:
+            critic_grads_value = self.sess.run(self.critic_grads, feed_dict= {
+            #critic_grads_value, critic_y_value = self.sess.run([self.critic_grads, self.critic_y], feed_dict= {
+                self.x_in: prestates,
+                self.action_in: actor_y_value
+            })
+        
+        """
+        if debug:
+            print 'critic_y_value : %s, %s' % (np.min(critic_y_value), np.max(critic_y_value))
+            print 'critic_grads_value : %s, %s' % (np.min(critic_grads_value), np.max(critic_grads_value))
+        """
         
         self.sess.run(self.actor_step, feed_dict={
             self.x_in: prestates,
             self.critic_grads_in: critic_grads_value[0]
         })
-        pass
 
     def update_model(self):
         self.sess.run(self.update_target, feed_dict={

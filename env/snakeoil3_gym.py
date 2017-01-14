@@ -118,7 +118,7 @@ def bargraph(x,mn,mx,w,c=u'X'):
     return u'[%s]' % (nnc+npc+ppc+pnc)
 
 class Client(object):
-    def __init__(self, bin, H=None,p=None,i=None,e=None,t=None,s=None,d=None,vision=False):
+    def __init__(self, bin, H=None,p=None,i=None,e=None,t=None,s=None,d=None,vision=False,track_file=None):
         # If you don't like the option defaults,  change them here.
         self.vision = vision
 
@@ -132,6 +132,7 @@ class Client(object):
         self.maxSteps= 100000  # 50steps/second
         #self.parse_the_command_line()
         self.bin = bin
+        self.track_file = track_file
         if H: self.host= H
         if p: self.port= p
         if i: self.sid= i
@@ -189,7 +190,7 @@ class Client(object):
                         os.system(command)
 
                     time.sleep(1.0)
-                    os.system(u'sh autostart.sh')
+                    os.system(u'sh %s' % self.track_file)
                     n_fail = 5
                 n_fail -= 1
 

@@ -6,7 +6,8 @@ import logging
 logger = logging.getLogger(__name__)
 
 class ReplayMemory:
-  def __init__(self, size, batch_size, history_length, width, height, minibatch_random, action_type_no, screen_order='shw'):
+  def __init__(self, vision, size, batch_size, history_length, width, height, minibatch_random, action_type_no, screen_order='shw'):
+    self.vision = vision
     self.size = size
     self.minibatch_random = minibatch_random
     self.screen_order = screen_order
@@ -16,31 +17,50 @@ class ReplayMemory:
     self.actions = np.empty((self.size, action_type_no), dtype = np.float32)
     
     self.rewards = np.empty(self.size, dtype = np.float32)
-    if self.screen_order == 'hws':        # (height, width, size)
-        screen_dim = (height, width, self.size)
-        state_dim = (batch_size, height, width, history_length)
-        self.history_buffer = np.zeros((1, height, width, history_length), dtype=np.float32)
-    else:       # (size, height, width)
-        screen_dim = (self.size, height, width)
-        state_dim = (batch_size, history_length, height, width)
-        self.history_buffer = np.zeros((1, history_length, height, width), dtype=np.float32)
-        
-    self.screens = np.empty(screen_dim, dtype = np.uint8)
-    self.terminals = np.empty(self.size, dtype = np.bool)
-    self.history_length = history_length
-    self.dims = (height, width)
-    self.batch_size = batch_size
-    self.count = 0
-    self.current = 0
-
-    # pre-allocate prestates and poststates for minibatch
-    self.prestates = np.empty(state_dim, dtype = np.uint8)
-    self.poststates = np.empty(state_dim, dtype = np.uint8)
+    if self.vision:
+        if self.screen_order == 'hws':        # (height, width, size)
+            screen_dim = (height, width, self.size)
+            state_dim = (batch_size, height, width, history_length)
+            self.history_buffer = np.zeros((1, height, width, history_length), dtype=np.float32)
+        else:       # (size, height, width)
+            screen_dim = (self.size, height, width)
+            state_dim = (batch_size, history_length, height, width)
+            self.history_buffer = np.zeros((1, history_length, height, width), dtype=np.float32)
+            
+        self.screens = np.empty(screen_dim, dtype = np.uint8)
+        self.terminals = np.empty(self.size, dtype = np.bool)
+        self.history_length = history_length
+        self.dims = (height, width)
+        self.batch_size = batch_size
+        self.count = 0
+        self.current = 0
+    
+        # pre-allocate prestates and poststates for minibatch
+        self.prestates = np.empty(state_dim, dtype = np.uint8)
+        self.poststates = np.empty(state_dim, dtype = np.uint8)
+    else:
+        if self.screen_order == 'hws':        # (height, width, size)
+            screen_dim = (width, self.size)
+        else:       # (size, height, width)
+            screen_dim = (self.size, width)
+        state_dim = (batch_size, width)
+        self.history_buffer = np.zeros((1, width), dtype=np.float32)
+            
+        self.screens = np.empty(screen_dim, dtype = np.float32)
+        self.terminals = np.empty(self.size, dtype = np.bool)
+        self.history_length = history_length
+        self.dims = (width)
+        self.batch_size = batch_size
+        self.count = 0
+        self.current = 0
+    
+        # pre-allocate prestates and poststates for minibatch
+        self.prestates = np.empty(state_dim, dtype = np.float32)
+        self.poststates = np.empty(state_dim, dtype = np.float32)
 
     logger.info("Replay memory size: %d" % self.size)
 
   def add(self, action, reward, screen, terminal):
-    assert screen.shape == self.dims
     addedIndex = self.current
     # NB! screen is post-state, after action and reward
     self.actions[self.current] = action
@@ -62,20 +82,27 @@ class ReplayMemory:
     assert self.count > 0, "replay memory is empty, use at least --random_steps 1"
     # normalize index to expected range, allows negative indexes
     index = index % self.count
-    # if is not in the beginning of matrix
-    if index >= self.history_length - 1:
-        # use faster slicing
-        if self.screen_order == 'hws':        # (height, width, size)
-          return self.screens[..., (index - (self.history_length - 1)):(index + 1)]
-        else:           # (size, height, width)
-          return self.screens[(index - (self.history_length - 1)):(index + 1), ...]
+    
+    if self.vision:
+        # if is not in the beginning of matrix
+        if index >= self.history_length - 1:
+            # use faster slicing
+            if self.screen_order == 'hws':        # (height, width, size)
+              return self.screens[..., (index - (self.history_length - 1)):(index + 1)]
+            else:           # (size, height, width)
+              return self.screens[(index - (self.history_length - 1)):(index + 1), ...]
+        else:
+          # otherwise normalize indexes and use slower list based access
+          indexes = [(index - i) % self.count for i in reversed(range(self.history_length))]
+          if self.screen_order == 'hws':        # (height, width, size)
+            return self.screens[..., indexes]
+          else:           # (size, height, width)
+            return self.screens[indexes, ...]
     else:
-      # otherwise normalize indexes and use slower list based access
-      indexes = [(index - i) % self.count for i in reversed(range(self.history_length))]
-      if self.screen_order == 'hws':        # (height, width, size)
-        return self.screens[..., indexes]
-      else:           # (size, height, width)
-        return self.screens[indexes, ...]
+        if self.screen_order == 'hws':        # (height, width, size)
+          return self.screens[..., index]
+        else:           # (size, height, width)
+          return self.screens[index, ...]
 
   def get_current_state(self):
     if self.current == 0:
@@ -126,7 +153,7 @@ class ReplayMemory:
 
   def get_minibatch_sequential(self, max_size):
     # memory must include poststate, prestate and history
-    assert self.count >= self.batch_size + self.history_length
+    assert self.count >= self.history_length
     if max_size == -1:
         max_size = self.batch_size
         
@@ -161,8 +188,11 @@ class ReplayMemory:
     return self.prestates[:data_size_to_ret, ...], actions, rewards, self.poststates[:data_size_to_ret, ...], terminals
 
   def add_to_history_buffer(self, state):
+    if self.vision:
         self.history_buffer[0, :, :, :-1] = self.history_buffer[0, :, :, 1:]
         self.history_buffer[0, :, :, -1] = state
-
+    else:
+        self.history_buffer[0] = state
+    
   def clear_history_buffer(self):
         self.history_buffer.fill(0)

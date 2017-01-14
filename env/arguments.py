@@ -14,6 +14,8 @@ def get_args():
     
     parser.add_argument('bin', type=str, help='torcs bin name')
     parser.add_argument('port', type=int, help='torcs port number')
+    parser.add_argument('--vision', action='store_true', help='use vision input or not')
+    parser.add_argument('--track', type=int, default=-1, help='track file no')
     parser.add_argument('--epoch_step', type=int, default=10000, help='train step no per epoch')
     parser.add_argument('--backend', type=str, default='TF')
     parser.add_argument('--thread-no', type=int, default=1, help='Number of multiple threads for Asynchronous RL')
@@ -22,6 +24,7 @@ def get_args():
     parser.add_argument('--snapshot', type=str, default=None, help='trained file to resume training or to replay') 
     parser.add_argument('--device', type=str, default='', help='gpu or cpu')
     parser.add_argument('--show-screen', action='store_true', help='whether to show display or not')
+    parser.set_defaults(vision=False)
     parser.set_defaults(show_screen=False)
     
     args = parser.parse_args()
@@ -32,7 +35,7 @@ def get_args():
         args.env = 'vizdoom'
         from env.vizdoom_env import initialize_args
         initialize_args(args)
-    elif args.rom == 'vizdoom':
+    elif args.rom == 'ale':
         args.env = 'ale'
         from env.ale_env import initialize_args
         initialize_args(args)

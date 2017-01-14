@@ -30,11 +30,13 @@ class ModelTorcs2(Model):
             self.print_log(h_acc)
             
             W_brake, b_brake = self.make_layer_variables([600, 1], trainable, "brake", weight_range)    
-            h_brake = tf.tanh(tf.matmul(h_actor_fc2, W_brake) + b_brake, name="h_brake")
+            h_brake = tf.sigmoid(tf.matmul(h_actor_fc2, W_brake) + b_brake, name="h_brake")
             self.print_log(h_brake)
 
-            #actor_y = tf.concat(1, [h_steering, h_acc, h_brake])
-            actor_y = tf.concat(1, [h_steering, h_acc])
+            if action_type_no == 3:
+                actor_y = tf.concat(1, [h_steering, h_acc, h_brake])
+            else:
+                actor_y = tf.concat(1, [h_steering, h_acc])
             self.print_log(actor_y)
 
 
@@ -52,7 +54,8 @@ class ModelTorcs2(Model):
             self.print_log(h_critic_fc2)
     
             W_critic_fc3, b_critic_fc3 = self.make_layer_variables([600, self.action_type_no], trainable, "critic_fc3")
-            critic_y = tf.nn.relu(tf.matmul(h_critic_fc2, W_critic_fc3) + b_critic_fc3, name="h_critic_fc3")
+            #critic_y = tf.nn.relu(tf.matmul(h_critic_fc2, W_critic_fc3) + b_critic_fc3, name="h_critic_fc3")
+            critic_y = tf.matmul(h_critic_fc2, W_critic_fc3) + b_critic_fc3
             self.print_log(critic_y)
 
                         

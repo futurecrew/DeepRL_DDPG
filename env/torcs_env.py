@@ -7,18 +7,22 @@ import cv2
 import env.snakeoil3_gym as snakeoil3
 
 class TorcsEnv():
-    def __init__(self, bin, port, display_screen):
+    def __init__(self, vision, bin, port, track, display_screen):
         self.actions = None
         self.display_screen = display_screen
         self.reset_count = 0
         self.client = None
+        self.vision = vision
         self.bin = bin
         self.port = port
+
+        if track == -1:
+            self.track_file = 'autostart.sh'
+        else:
+            self.track_file = 'autostart%s.sh' % track
+        
         self.damage = 0
 
-        #self.vision = True
-        self.vision = False
-        
         self.throttle = True
         self.gear_change = True
         self.initial_run = True
@@ -36,6 +40,7 @@ class TorcsEnv():
         self.damage = 0
         self.conn_error = False
         self.reset_count += 1
+        self.total_reward = 0
 
         if self.client is not None:
             self.client.R.d['meta'] = True
@@ -50,11 +55,11 @@ class TorcsEnv():
                 command = '%s -p %s -nofuel -nolaptime &' % (self.bin, self.port)
             os.system(command)
             time.sleep(0.5)
-            os.system('sh autostart.sh')
+            os.system('sh %s' % self.track_file)
             time.sleep(0.5)
 
         # Modify here if you use multiple tracks in the environment
-        self.client = snakeoil3.Client(self.bin, p=self.port, vision=self.vision)  # Open new UDP in vtorcs
+        self.client = snakeoil3.Client(self.bin, p=self.port, vision=self.vision, track_file=self.track_file)  # Open new UDP in vtorcs
         self.client.MAX_STEPS = np.inf
 
         client = self.client
@@ -81,28 +86,41 @@ class TorcsEnv():
         return np.array(imgR, dtype=np.uint8), np.array(imgG, dtype=np.uint8), np.array(imgB, dtype=np.uint8)
     
     def getScreenGrayscale(self, debug_display=False, debug_display_sleep=0):
-        focus=np.array(self.obs['focus'], dtype=np.float32)/200.
-        speedX=np.array(self.obs['speedX'], dtype=np.float32)/300.0
-        speedY=np.array(self.obs['speedY'], dtype=np.float32)/300.0
-        speedZ=np.array(self.obs['speedZ'], dtype=np.float32)/300.0
-        angle=np.array(self.obs['angle'], dtype=np.float32)/3.1416
-        damage=np.array(self.obs['damage'], dtype=np.float32)
-        opponents=np.array(self.obs['opponents'], dtype=np.float32)/200.
-        rpm=np.array(self.obs['rpm'], dtype=np.float32)/10000
-        track=np.array(self.obs['track'], dtype=np.float32)/200.
-        trackPos=np.array(self.obs['trackPos'], dtype=np.float32)/1.
-        wheelSpinVel=np.array(self.obs['wheelSpinVel'], dtype=np.float32)/100.
-        
-        state = np.hstack((angle, track, trackPos, speedX, speedY, speedZ, wheelSpinVel, rpm))
+        if self.vision:
+            obs = self.client.S.d
+            img_size = len(obs['img'])
+            red = np.array(obs['img'][0:img_size:3], dtype=np.uint8).reshape(64, 64)
+            green = np.array(obs['img'][1:img_size:3], dtype=np.uint8).reshape(64, 64)
+            blue = np.array(obs['img'][2:img_size:3], dtype=np.uint8).reshape(64, 64)
+            state = np.array(0.2989*red + 0.5870*green + 0.1140*blue, dtype=np.uint8)
+            
+            if debug_display:
+                cv2.imshow('image', state)
+                cv2.waitKey(debug_display_sleep)
+        else:
+            focus=np.array(self.obs['focus'], dtype=np.float32)/200.
+            speedX=np.array(self.obs['speedX'], dtype=np.float32)/300.0
+            speedY=np.array(self.obs['speedY'], dtype=np.float32)/300.0
+            speedZ=np.array(self.obs['speedZ'], dtype=np.float32)/300.0
+            angle=np.array(self.obs['angle'], dtype=np.float32)/3.1416
+            damage=np.array(self.obs['damage'], dtype=np.float32)
+            opponents=np.array(self.obs['opponents'], dtype=np.float32)/200.
+            rpm=np.array(self.obs['rpm'], dtype=np.float32)/10000
+            track=np.array(self.obs['track'], dtype=np.float32)/200.
+            trackPos=np.array(self.obs['trackPos'], dtype=np.float32)/1.
+            wheelSpinVel=np.array(self.obs['wheelSpinVel'], dtype=np.float32)/100.
+            
+            state = np.hstack((angle, track, trackPos, speedX, speedY, speedZ, wheelSpinVel, rpm))
        
         return state
     
     def act(self, actions):
         self.client.R.d['steer'] = actions[0]
         self.client.R.d['accel'] = actions[1]
-        # DJDJ
-        #self.client.R.d['brake'] = actions[2]
-        self.client.R.d['brake'] = 0
+        if self.action_type_no == 3:
+            self.client.R.d['brake'] = actions[2]
+        else:
+            self.client.R.d['brake'] = 0
         #self.client.R.d['gear'] = 1
         
         self.client.respond_to_server()
@@ -113,6 +131,9 @@ class TorcsEnv():
         
         self.obs = self.client.S.d        
         reward = self.get_reward(self.obs)
+        
+        self.total_reward += reward
+        
         return reward
     
     def get_reward(self, obs):
@@ -130,8 +151,11 @@ class TorcsEnv():
         if abs(obs['angle']) > 3.14 / 2:      # car direction is reverse
             print 'game_over 1'
             return True
-        elif obs['curLapTime'] > 10 and obs['speedX'] * abs(math.cos(obs['angle'])) < 0.1:        # Car is stuck 
+        elif obs['curLapTime'] > 50 and obs['speedX'] * abs(math.cos(obs['angle'])) < 0.1:        # Car is stuck 
             print 'game_over 2'
+            return True
+        elif self.total_reward < -1000:
+            print 'game_over 3'
             return True
         elif self.conn_error == True:
             return True
@@ -142,13 +166,12 @@ class TorcsEnv():
         os.system('pkill %s' % self.bin)
     
 def initialize_args(args):
-    
-    args.aa_no_divide_by_255 = True
-    
-    #args.screen_width = 64    # input screen width
-    #args.screen_height = 64    # input screen height
-    args.screen_width = 29    # input screen width
-    args.screen_height = 1    # input screen height
+    if args.vision:
+        args.screen_width = 64    # input screen width
+        args.screen_height = 64    # input screen height
+    else:
+        args.screen_width = 29    # input screen width
+        args.screen_height = 1    # input screen height
     
     args.screen_history = 1    # input screen history
     args.frame_repeat = 1    # how many frames to repeat in ale for one predicted action
@@ -164,7 +187,6 @@ def initialize_args(args):
     args.clip_loss = True
 
     # DJDJ
-    #args.backend = 'TF'    # Deep learning library backend (TF, NEON)
     args.priority_type = '555'
         
     if args.backend == 'TF':
@@ -236,8 +258,12 @@ def initialize_args(args):
         args.max_replay_memory = 1000000
         args.max_epoch = 200
         args.epoch_step = 250000
-        args.train_start = 0        # start training after filling this replay memory size
-        args.train_step = 4                 # Train every this screen step
+        args.train_start = 10        # start training after filling this replay memory size
+
+        # DJDJ        
+        #args.train_step = 4                 # Train every this screen step
+        args.train_step = 1                 # Train every this screen step
+        
         args.learning_rate = 0.00025                 
         args.rms_decay = 0.95                
         args.rms_epsilon = 0.01                 
@@ -247,7 +273,7 @@ def initialize_args(args):
         args.minibatch_random = True
         args.train_min_epsilon = 0.1    # minimum greedy epsilon value for exloration
         args.train_epsilon_start_step = 0    # start decreasing greedy epsilon from this train step 
-        args.train_epsilon_end_step = 30000    # end decreasing greedy epsilon from this train step 
+        args.train_epsilon_end_step = 50000    # end decreasing greedy epsilon from this train step 
         args.update_step = 100    # copy train network into target network every this train step
         args.optimizer = 'RMSProp'    # 
         args.save_step = 10000            # save result every this training step

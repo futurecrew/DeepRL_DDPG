@@ -128,16 +128,15 @@ class DeepRLPlayer:
             print "args.backend should be NEON or TF."
 
     def initialize_replay_memory(self):
-        uniform_replay_memory = ReplayMemory2(
+        uniform_replay_memory = ReplayMemory(
+                                     self.args.vision,
                                      self.args.max_replay_memory, 
                                      self.args.train_batch_size,
                                      self.args.screen_history,
                                      self.args.screen_width,
                                      self.args.screen_height,
                                      self.args.minibatch_random,
-                                     # DJDJ
-                                     #3,     # steering, accel, brake
-                                     2,     # steering, accel
+                                     self.env.get_action_type_no(),
                                      self.args.screen_order)
         if self.args.prioritized_replay == True:
             self.replay_memory = SamplingManager(uniform_replay_memory,
@@ -192,20 +191,24 @@ class DeepRLPlayer:
         if debug_print and self.thread_no == 0:
             print 'greedy_epsilon: %.3f, normal: %.3f' % (greedy_epsilon, np.random.normal(0, greedy_epsilon))
         
-        noise_0 = self.OU(0.15, action_values[0], 0, 0.2)
-        noise_1 = self.OU(0.15, action_values[1], 0.6, 0.2)
-                     
-        action_values[0] = np.clip(action_values[0] + greedy_epsilon * noise_0, -1, 1)
-        action_values[1] = np.clip(action_values[1] + greedy_epsilon * noise_1, 0, 1)
-        
-        # DJDJ
-        #action_values[2] = np.clip(action_values[2] + np.random.normal(0, greedy_epsilon), 0, 1)
-        #action_values[2] = 0
+        if mode == 'TRAIN':
+            noise_0 = self.OU(0.15, action_values[0], 0, 0.2)
+            noise_1 = self.OU(0.15, action_values[1], 0.6, 0.2)
+                         
+            action_values[0] = np.clip(action_values[0] + greedy_epsilon * noise_0, -1, 1)
+            action_values[1] = np.clip(action_values[1] + greedy_epsilon * noise_1, 0, 1)
+
+            if self.action_type_no == 3:
+                noise_2 = self.OU(0.15, action_values[2], 0.05, 0.1)
+                if random.random() > 0.1:   # brake
+                    action_values[2] = 0
+                else:
+                    action_values[2] = np.clip(action_values[2] + greedy_epsilon * noise_2, 0, 1)
         
         if debug_print_step and self.thread_no == 0:
             print 'action_values : %s' % action_values
 
-        return action_values
+        return action_values, greedy_epsilon
                                                  
     def get_action_state_value(self, mode):
         global debug_print_step
@@ -233,7 +236,7 @@ class DeepRLPlayer:
     
     def print_env(self):
         if self.args.asynchronousRL == False or self.thread_no == 0:
-            print 'Start time: %s' % time.strftime('%Y.%m.%d %H:%M:%S')
+            print 'Start time: %s' % self.train_start
             print '[ Running Environment ]'
             for arg in sorted(vars(self.args)):
                 print '{} : '.format(arg).ljust(30) + '{}'.format(getattr(self.args, arg))
@@ -296,7 +299,7 @@ class DeepRLPlayer:
         start_time = time.time()
         self.reset_game()
         for _ in range(count):
-            action_index = self.get_action_index('TRAIN')
+            action_index, greedy_epsilon = self.get_action_index('TRAIN')
             reward, state, terminal, game_over = self.do_actions(action_index, 'TRAIN')
             self.replay_memory.add(action_index, reward, state, terminal)
                 
@@ -330,6 +333,8 @@ class DeepRLPlayer:
             reward, state, terminal, game_over = self.do_actions(action_index, 'TEST')
                 
             episode_reward += reward
+
+            print 'action_values : %s, reward: %.1f' % (action_index, reward)
 
             self.replay_memory.add_to_history_buffer(state)
             
@@ -392,7 +397,7 @@ class DeepRLPlayer:
             episode = 1
 
             for step_no in range(1, self.args.epoch_step + 1):
-                action_index = self.get_action_index('TRAIN')
+                action_index, greedy_epsilon = self.get_action_index('TRAIN')
                 
                 # DJDJ
                 if debug_manual:
@@ -427,9 +432,9 @@ class DeepRLPlayer:
                         self.model_runner.train(minibatch, self.replay_memory, learning_rate, debug_print)
                         self.model_runner.update_model()
                 
-                    if self.total_step % self.args.save_step == 0 and self.thread_no == 0:
-                        file_name = 'dqn_%s' % self.total_step
-                        self.save(file_name)
+                if self.total_step % self.args.save_step == 0 and self.thread_no == 0:
+                    file_name = 'dqn_%s' % self.total_step
+                    self.save(file_name)
                      
                 if game_over:
                     print "Ep %s, score: %.2f, step: %s, elapsed: %.1fs, avg: %.2f t_step:%s, t_elapsed: %.0fm" % (
@@ -751,7 +756,7 @@ def get_env(args, initialize, show_screen):
             env.initialize()
     elif args.env == 'torcs':
         from env.torcs_env import TorcsEnv
-        env = TorcsEnv(args.bin, args.port, show_screen)
+        env = TorcsEnv(args.vision, args.bin, args.port, args.track, show_screen)
         if initialize:
             env.initialize()
     return env
@@ -843,7 +848,7 @@ if __name__ == '__main__':
                 player.print_env()
                 player.initialize_post()
                 player.model_runner.load(save_file + '.weight')
-                player.train(replay_memory_no = player.replay_memory_no)
+                player.train()
         else:
             player = DeepRLPlayer(args)
             player.total_step = 0
