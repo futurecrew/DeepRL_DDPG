@@ -139,7 +139,8 @@ class TorcsEnv():
     def get_reward(self, obs):
         if abs(obs['angle']) > 3.14 / 2:      # car direction is reverse
             return -100
-        reward = obs['speedX'] * abs(math.cos(obs['angle'])) -  obs['speedX'] * abs(math.sin(obs['angle'])) - obs['speedX'] * abs(obs['trackPos'])
+        #reward = obs['speedX'] * abs(math.cos(obs['angle'])) -  obs['speedX'] * abs(math.sin(obs['angle'])) - obs['speedX'] * abs(obs['trackPos'])
+        reward = obs['speedX'] * abs(math.cos(obs['angle'])) -  obs['speedX'] * abs(math.sin(obs['angle'])) - 50 * abs(obs['trackPos'])
         if obs['damage'] > self.damage:
             self.damage = obs['damage']
             if reward > 0:
@@ -254,7 +255,10 @@ def initialize_args(args):
     else:
         args.asynchronousRL = False
         args.use_annealing = False
-        args.train_batch_size = 64
+        if args.vision:
+            args.train_batch_size = 16
+        else:
+            args.train_batch_size = 64
         args.max_replay_memory = 1000000
         args.max_epoch = 200
         args.epoch_step = 250000
